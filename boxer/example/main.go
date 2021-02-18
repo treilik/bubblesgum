@@ -21,7 +21,7 @@ func main() {
 	lowestSecondLeave.Content = lowestSecond
 
 	grandNode := boxer.Model{}
-	grandNode.Stacked = true
+	grandNode.Vertical = true
 	grandNode.AddChildren([]boxer.BoxSize{{Box: boxer.Boxer(lowestFirstLeave)}, {Box: boxer.Boxer(lowestSecondLeave)}})
 
 	grandChild := list.NewModel()
@@ -31,7 +31,7 @@ func main() {
 	grandLeave.Focus = true
 
 	rightChild := boxer.Model{}
-	rightChild.Stacked = true
+	rightChild.Vertical = true
 	rightChild.AddChildren([]boxer.BoxSize{{
 		Box: boxer.Boxer(grandNode),
 	}, {
