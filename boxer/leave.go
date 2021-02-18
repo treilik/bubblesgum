@@ -70,17 +70,19 @@ func (l Leave) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		// TODO is there always a node befor a leave?
 		for c := len(msg.path) - 1; c >= 0; c-- {
-			if msg.path[c].vertical != msg.vertical {
+			ancestor := msg.path[c]
+			// ignore ancestors with undesired orientation
+			if ancestor.vertical != msg.vertical {
 				continue
 			}
 			l.Focus = false                  // TODO make sure a leave is allways focused
 			l.BorderStyle = termenv.String() // TODO remove hardcoding of style
-			newIndex := msg.path[c].index - 1
+			newIndex := ancestor.index - 1
 			if msg.next {
-				newIndex = msg.path[c].index + 1
+				newIndex = ancestor.index + 1
 			}
-			// here we can check if infront the array but not if behind this will be checked in that node
-			if newIndex < 0 {
+			// skip ancestors with to less children in the desired direction
+			if newIndex < 0 || newIndex >= ancestor.childAmount {
 				continue
 			}
 

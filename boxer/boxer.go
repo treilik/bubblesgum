@@ -18,11 +18,9 @@ type Boxer interface {
 type Model struct {
 	children      []BoxSize
 	Height, Width int
-	Stacked       bool // TODO rename to vertical
+	Vertical      bool
 	id            int
 	lastFocused   int
-
-	errList []string // TODO remove?
 
 	requestID chan<- chan int
 }
@@ -56,9 +54,10 @@ type ChangeFocus struct {
 }
 
 type nodePos struct {
-	index    int
-	vertical bool
-	id       int //TODO remove
+	index       int
+	vertical    bool
+	id          int //TODO remove
+	childAmount int
 }
 
 // NewProporationError returns a uniform string for this error
@@ -102,7 +101,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			newModel, cmd := box.Box.Update(msg)
 			newBoxer, ok := newModel.(Boxer)
 			if !ok {
-				continue
+				continue // TODO dont ignore this error
 			}
 			box.Box = newBoxer
 			m.children[i] = box
@@ -112,10 +111,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	// FocusLeave is a exception to the FAN-OUT of the Msg's because for each child there is a specific msg, similar to the WindowSizeMsg.
 	case FocusLeave:
+		length := len(m.children)
 		for i, box := range m.children {
 			// for each child append its position to the path
 			newMsg := msg
-			newMsg.path = append(msg.path, nodePos{index: i, vertical: m.Stacked, id: m.id})
+			newMsg.path = append(msg.path, nodePos{index: i, vertical: m.Vertical, id: m.id, childAmount: length})
 			newModel, cmd := box.Box.Update(newMsg)
 			// Focus
 			newBoxer, ok := newModel.(Boxer)
@@ -135,56 +135,20 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		// path is not empyt
 		if len(msg.newFocus.path) > 0 {
-			// follow the pfad
+			// follow the path
 			targetIndex = msg.newFocus.path[0].index
 		}
 
 		// path is empty => dont know where to go.
 		if len(msg.newFocus.path) == 0 {
 			// default to the first in the directon of the movement. (i.e. the first or the last)
-			if !msg.newFocus.next && msg.newFocus.vertical == m.Stacked {
+			if !msg.newFocus.next && msg.newFocus.vertical == m.Vertical {
 				targetIndex = len(m.children) - 1
 			}
 		}
-
 		// if its not possible to follow the path:
 		if targetIndex < 0 || targetIndex >= len(m.children) {
-			// then search for the next parent in path with the same orientation, to give focus to.
-			// this has to be here (within the node) since the children does not know is position in the array.
-			for c, parent := range msg.handledPath {
-				// ignore parents with different orientatien
-				if parent.vertical != msg.newFocus.vertical {
-					continue
-				}
-				newPath := msg.handledPath
-				// try to move to previous/next branch
-				if targetIndex < 0 {
-					// we do not (and can not) know here, if the index will be out of bounds, but this code here in the next parent with the same orientation will check it again.
-					newPath[c].index--
-				}
-				if targetIndex >= len(m.children) {
-					// we do not (and can not) know here, if the index will be out of bounds, but this code here in the next parent with the same orientation will check it again.
-					newPath[c].index++
-				}
-				newChange := ChangeFocus{focus: true, newFocus: FocusLeave{path: newPath, vertical: msg.newFocus.vertical, next: msg.newFocus.next}}
-				return m, func() tea.Msg { return newChange }
-			}
-			// no parent with correct orientatien found
-			// TODO doc
-			if targetIndex < 0 {
-				m.lastFocused = 0
-				targetIndex = 0 // focus first
-			}
-			if targetIndex >= len(m.children) {
-				m.lastFocused = len(m.children) - 1
-				targetIndex = len(m.children) - 1 // focus last
-			}
-			if len(msg.handledPath) > 0 {
-				// issue default focus through empty path
-				return m, func() tea.Msg { return ChangeFocus{focus: true, newFocus: FocusLeave{vertical: msg.newFocus.vertical}} }
-			}
-
-			// TODO doc (root)
+			panic("tree has changed since ChangeFocus was send") // TODO change to error type
 		}
 
 		childMsg := ChangeFocus{focus: msg.focus, newFocus: FocusLeave{vertical: msg.newFocus.vertical}}
@@ -233,7 +197,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		for i, box := range m.children {
 			newHeigth := msg.Height
 			newWidth := (msg.Width) / amount
-			if m.Stacked {
+			if m.Vertical {
 				newHeigth = (msg.Height) / amount
 				newWidth = msg.Width
 			}
@@ -249,9 +213,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			cmdList = append(cmdList, cmd)
 		}
 		return m, tea.Batch(cmdList...)
-	case error:
-		m.errList = append(m.errList, msg.Error())
-		return m, nil
 	default:
 		for i, box := range m.children {
 			newModel, cmd := box.Box.Update(msg)
@@ -272,7 +233,7 @@ func (m Model) View() string {
 	if err != nil {
 		return err.Error()
 	}
-	return strings.Join(append(lines, m.errList...), "\n") // TODO make windows compatible
+	return strings.Join(lines, "\n") // TODO make windows compatible
 }
 
 // Lines returns the joined lines of all the contained Boxers
@@ -282,7 +243,7 @@ func (m Model) Lines() ([]string, error) {
 
 // Lines returns the joined lines of all the contained Boxers
 func (m *Model) lines() ([]string, error) {
-	if m.Stacked {
+	if m.Vertical {
 		return upDownJoin(m.children)
 	}
 	return leftRightJoin(m.children)
@@ -354,7 +315,7 @@ func upDownJoin(toJoin []BoxSize) ([]string, error) {
 		if len(lines) > child.Heigth {
 			return nil, NewProporationError(child.Box)
 		}
-		// check for  to wide lines and because we are on it, pad them to corrct width.
+		// check for to wide lines and because we are on it, pad them to corrct width.
 		for _, line := range lines {
 			lineWidth := ansi.PrintableRuneWidth(line)
 			if formerWidth > 0 && lineWidth != formerWidth {
