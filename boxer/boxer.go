@@ -8,6 +8,13 @@ import (
 	"github.com/muesli/reflow/ansi"
 )
 
+const (
+	// SPACE is used to fill up lines
+	SPACE = " "
+	//NEWLINE is the newline string
+	NEWLINE = "\n" // TODO make windows compatible
+)
+
 // Boxer is a interface to render multiple bubbles (within a tree) to the terminal screen.
 type Boxer interface {
 	Lines() ([]string, error)
@@ -62,7 +69,7 @@ type nodePos struct {
 
 // NewProporationError returns a uniform string for this error
 func NewProporationError(b Boxer) error {
-	return fmt.Errorf("the Lines function of this boxer: '%v'\nhas returned to much or long lines", b)
+	return fmt.Errorf("the Lines function of this boxer: '%v'%shas returned to much or long lines", b, NEWLINE)
 }
 
 // Init call the Init methodes of the Children and returns the batched/collected returned Cmd's of them
@@ -77,7 +84,7 @@ func (m Model) Init() tea.Cmd {
 }
 
 // Update handles the ratios between the different Boxers
-// though the according fanning of the WindowSizeMsg's
+// through the according fanning of the WindowSizeMsg's
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmdList []tea.Cmd
 	switch msg := msg.(type) {
@@ -193,18 +200,33 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, tea.Batch(cmdList...)
 	case tea.WindowSizeMsg:
+
 		amount := len(m.children)
+		quotient := msg.Width / amount
+		remainder := msg.Width - quotient*amount
+		if m.Vertical {
+			quotient = msg.Height / amount
+			remainder = msg.Height - quotient*amount
+		}
 		for i, box := range m.children {
 			newHeigth := msg.Height
-			newWidth := (msg.Width) / amount
+			newWidth := quotient
+			if !m.Vertical && remainder > 0 {
+				remainder--
+				newWidth++
+			}
 			if m.Vertical {
-				newHeigth = (msg.Height) / amount
+				newHeigth = quotient
 				newWidth = msg.Width
+				if remainder > 0 {
+					remainder--
+					newHeigth++
+				}
 			}
 			newModel, cmd := box.Box.Update(tea.WindowSizeMsg{Height: newHeigth, Width: newWidth})
 			newBoxer, ok := newModel.(Boxer)
 			if !ok {
-				continue
+				continue // TODO
 			}
 			box.Box = newBoxer
 			box.Heigth = newHeigth
@@ -233,7 +255,7 @@ func (m Model) View() string {
 	if err != nil {
 		return err.Error()
 	}
-	return strings.Join(lines, "\n") // TODO make windows compatible
+	return strings.Join(lines, NEWLINE)
 }
 
 // Lines returns the joined lines of all the contained Boxers
@@ -244,19 +266,20 @@ func (m Model) Lines() ([]string, error) {
 // Lines returns the joined lines of all the contained Boxers
 func (m *Model) lines() ([]string, error) {
 	if m.Vertical {
-		return upDownJoin(m.children)
+		return m.upDownJoin()
 	}
-	return leftRightJoin(m.children)
+	return m.leftRightJoin()
 }
 
-func leftRightJoin(toJoin []BoxSize) ([]string, error) {
-	if len(toJoin) == 0 {
+func (m *Model) leftRightJoin() ([]string, error) {
+	if len(m.children) == 0 {
 		return nil, fmt.Errorf("no children to get lines from")
 	}
 	//            y  x
 	var joinedStr [][]string
 	var formerHeigth int
-	for _, boxer := range toJoin {
+	// bring all to same heigth if they are smaller
+	for _, boxer := range m.children {
 		lines, err := boxer.Box.Lines()
 		if err != nil {
 			return nil, err
@@ -273,21 +296,22 @@ func leftRightJoin(toJoin []BoxSize) ([]string, error) {
 	}
 
 	lenght := len(joinedStr)
-	boxWidth := toJoin[0].Width
+	// Join the horizontal lines together
 	var allStr []string
 	// y
 	for c := 0; c < formerHeigth; c++ {
 		fullLine := make([]string, 0, lenght)
 		// x
 		for i := 0; i < lenght; i++ {
+			boxWidth := m.children[i].Width
 			line := joinedStr[i][c]
 			lineWidth := ansi.PrintableRuneWidth(line)
 			if lineWidth > boxWidth {
-				return nil, NewProporationError(toJoin[i].Box)
+				return nil, NewProporationError(m.children[i].Box)
 			}
 			var pad string
 			if lineWidth < boxWidth {
-				pad = strings.Repeat(" ", boxWidth-lineWidth)
+				pad = strings.Repeat(SPACE, boxWidth-lineWidth)
 			}
 			fullLine = append(fullLine, line, pad)
 		}
@@ -297,14 +321,14 @@ func leftRightJoin(toJoin []BoxSize) ([]string, error) {
 	return allStr, nil
 }
 
-func upDownJoin(toJoin []BoxSize) ([]string, error) {
-	if len(toJoin) == 0 {
+func (m *Model) upDownJoin() ([]string, error) {
+	if len(m.children) == 0 {
 		return nil, fmt.Errorf("")
 	}
-	boxWidth := toJoin[0].Width
+	boxWidth := m.children[0].Width
 	var boxes []string
 	var formerWidth int
-	for _, child := range toJoin {
+	for _, child := range m.children {
 		if child.Box == nil {
 			return nil, fmt.Errorf("cant work on nil Boxer") // TODO
 		}
@@ -321,12 +345,12 @@ func upDownJoin(toJoin []BoxSize) ([]string, error) {
 			if formerWidth > 0 && lineWidth != formerWidth {
 				return nil, fmt.Errorf("for vertical join all boxes have to be the same width") // TODO change to own error type
 			}
-			line += strings.Repeat(" ", boxWidth-lineWidth)
+			line += strings.Repeat(SPACE, boxWidth-lineWidth)
 		}
 		boxes = append(boxes, lines...)
 		// add more lines to boxes to match the Height of the child-box
 		for c := 0; c < child.Heigth-len(lines); c++ {
-			boxes = append(boxes, strings.Repeat(" ", boxWidth))
+			boxes = append(boxes, strings.Repeat(SPACE, boxWidth))
 		}
 	}
 	return boxes, nil
@@ -380,3 +404,5 @@ func (m *Model) getID() int {
 	m.requestID <- idChan
 	return <-idChan
 }
+
+// func resize(newSize tea.WindowSizeMsg, childrenAmount int) ([]int, error)
