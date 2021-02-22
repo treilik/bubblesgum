@@ -109,7 +109,7 @@ func (l Leave) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return l.Content.Update(msg)
 		}
 		// account for Border width/heigth
-		l.innerHeigth = msg.Height - strings.Count(l.N+l.S, "\n") - 2
+		l.innerHeigth = msg.Height - strings.Count(l.N+l.S, NEWLINE) - 2
 		l.innerWidth = msg.Width - ansi.PrintableRuneWidth(l.W+l.O)
 		newContent, cmd := l.Content.Update(tea.WindowSizeMsg{Height: l.innerHeigth, Width: l.innerWidth})
 		l.Content = newContent
@@ -130,7 +130,7 @@ func (l Leave) View() string {
 	if err != nil {
 		return err.Error()
 	}
-	return strings.Join(lines, "\n")
+	return strings.Join(lines, NEWLINE)
 }
 
 // Lines returns the fully rendert (maybe with borders) lines and fullfills the Boxer Interface.
@@ -146,7 +146,7 @@ func (l *Leave) lines() ([]string, error) {
 	if ok {
 		lines, err = boxer.Lines()
 	} else {
-		lines = strings.Split(l.Content.View(), "\n")
+		lines = strings.Split(l.Content.View(), NEWLINE)
 	}
 	if length := len(lines); length > l.innerHeigth {
 		return nil, NewProporationError(l)
@@ -163,14 +163,14 @@ func (l *Leave) lines() ([]string, error) {
 		if lineWidth > l.innerWidth {
 			return nil, NewProporationError(l)
 		}
-		lines[i] = line + strings.Repeat(" ", l.innerWidth-lineWidth)
+		lines[i] = line + strings.Repeat(SPACE, l.innerWidth-lineWidth)
 	}
 
 	if !l.Border {
 		return lines, err
 	}
 	// draw border
-	fullLines := make([]string, 0, len(lines)+strings.Count(l.N, "\n")+1)
+	fullLines := make([]string, 0, len(lines)+strings.Count(l.N, NEWLINE)+1)
 	firstLine := l.NW + strings.Repeat(l.N, l.innerWidth) + l.NO
 	begin, end := l.W, l.O
 	lastLine := l.SW + strings.Repeat(l.S, l.innerWidth) + l.SO
