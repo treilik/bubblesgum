@@ -376,7 +376,7 @@ func (m *Model) AddChildren(cList []BoxSize) error {
 	}
 	m.children = append(m.children, newChildren...)
 	if errCount > 0 {
-		return fmt.Errorf("%d entrys could not be added", errCount)
+		return fmt.Errorf("%d entrys could not be added, because there type does not match a 'boxer.Model' or 'boxer.Leave'.\n Most likely you have to embed your model in a 'boxer.Leave.Content'", errCount)
 	}
 	return nil
 }
