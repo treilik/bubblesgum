@@ -11,13 +11,13 @@ import (
 
 func main() {
 	lowestFirst := list.NewModel()
-	lowestFirst.AddItems(list.MakeStringerList([]string{"first", "lowest first child"}))
+	lowestFirst.AddItems(list.MakeStringerList("first", "lowest first child"))
 	lowestFirstLeave := boxer.NewLeave()
 	lowestFirstLeave.Content = lowestFirst
 	lowestFirstLeave.Address = "target"
 
 	lowestSecond := custom{model: list.NewModel()}
-	lowestSecond.model.AddItems(list.MakeStringerList([]string{"first", "lowest second child test"}))
+	lowestSecond.model.AddItems(list.MakeStringerList("first", "lowest second child test"))
 	lowestSecondLeave := boxer.NewLeave()
 	lowestSecondLeave.Content = lowestSecond
 
@@ -26,7 +26,7 @@ func main() {
 	grandNode.AddChildren(boxer.BoxSize{Box: lowestFirstLeave}, boxer.BoxSize{Box: lowestSecondLeave})
 
 	grandChild := list.NewModel()
-	grandChild.AddItems(list.MakeStringerList([]string{"second", "grandchild"}))
+	grandChild.AddItems(list.MakeStringerList("second", "grandchild"))
 	grandLeave := boxer.NewLeave()
 	grandLeave.Content = grandChild
 	grandLeave.Focus = true
@@ -36,12 +36,12 @@ func main() {
 	rightChild.AddChildren(boxer.BoxSize{Box: grandNode}, boxer.BoxSize{Box: grandLeave})
 
 	leftList := list.NewModel()
-	leftList.AddItems(list.MakeStringerList([]string{"leftList", "rootchild"}))
+	leftList.AddItems(list.MakeStringerList("leftList", "rootchild"))
 	leftLeave := boxer.NewLeave()
 	leftLeave.Content = leftList
 
 	rigthList := list.NewModel()
-	rigthList.AddItems(list.MakeStringerList([]string{"rigthList", "rootchild"}))
+	rigthList.AddItems(list.MakeStringerList("rigthList", "rootchild"))
 	rigthLeave := boxer.NewLeave()
 	rigthLeave.Content = rigthList
 
