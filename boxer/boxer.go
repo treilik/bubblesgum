@@ -1,7 +1,6 @@
 package boxer
 
 import (
-	"fmt"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -28,6 +27,7 @@ type Model struct {
 	Vertical      bool
 	id            int
 	lastFocused   int
+	//Sizer         func(childLenght, currentIndex int, msg tea.WindowSizeMsg) (tea.WindowSizeMsg, error)
 
 	requestID chan<- chan int
 }
@@ -44,16 +44,13 @@ type Start struct{}
 // InitIDs is a Msg to spread the id's of the leaves
 type InitIDs chan<- chan int
 
-// ProportionError is for signaling that the string return by the View or Lines function has wrong proportions(width/height)
-type ProportionError error
-
-// FocusLeave is used to gather the path of each leave while its trasported to the leave.
+// FocusLeave is used to gather the path of each leave while its transported to the leave.
 type FocusLeave struct {
 	path           []nodePos
 	vertical, next bool
 }
 
-// ChangeFocus is the answere of FocusLeave and tells the parents to change the focus of the leaves by two msg.
+// ChangeFocus is the answer of FocusLeave and tells the parents to change the focus of the leaves by two msg.
 type ChangeFocus struct {
 	newFocus    FocusLeave
 	focus       bool
@@ -67,12 +64,7 @@ type nodePos struct {
 	childAmount int
 }
 
-// NewProporationError returns a uniform string for this error
-func NewProporationError(b Boxer) error {
-	return fmt.Errorf("the Lines function of this boxer: '%v'%shas returned to much or long lines", b, NEWLINE)
-}
-
-// Init call the Init methodes of the Children and returns the batched/collected returned Cmd's of them
+// Init call the Init methods of the Children and returns the batched/collected returned Cmd's of them
 func (m Model) Init() tea.Cmd {
 	cmdList := make([]tea.Cmd, len(m.children))
 	for _, child := range m.children {
@@ -90,7 +82,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case Start:
 		// only the root node gets this all other ids will be set through the spreading of InitIDs
-		// TODO should root node be a own struct? to handel the id spread-starting cleaner.
+		// TODO should root node be a own struct? To handle the id spread-starting cleaner.
 		if m.requestID != nil {
 			return m, nil
 		}
@@ -148,7 +140,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		// path is empty => dont know where to go.
 		if len(msg.newFocus.path) == 0 {
-			// default to the first in the directon of the movement. (i.e. the first or the last)
+			// default to the first in the direction of the movement. (i.e. the first or the last)
 			if !msg.newFocus.next && msg.newFocus.vertical == m.Vertical {
 				targetIndex = len(m.children) - 1
 			}
@@ -200,6 +192,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, tea.Batch(cmdList...)
 	case tea.WindowSizeMsg:
+		m.Width = msg.Width
+		m.Height = msg.Height
 
 		amount := len(m.children)
 		quotient := msg.Width / amount
@@ -251,10 +245,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 // View is only used for the top (root) node since all other Models use the Lines function.
 func (m Model) View() string {
-	lines, err := m.lines()
-	if err != nil {
-		return err.Error()
-	}
+	// The error is ignored here since we can't return it and it would (when printed) overwrite all the boxes.
+	lines, _ := m.lines()
 	return strings.Join(lines, NEWLINE)
 }
 
@@ -273,33 +265,36 @@ func (m *Model) lines() ([]string, error) {
 
 func (m *Model) leftRightJoin() ([]string, error) {
 	if len(m.children) == 0 {
-		return nil, fmt.Errorf("no children to get lines from")
+		err := NewNoChildrenError()
+		return strings.Split(err.Error(), NEWLINE), err
 	}
 	//            y  x
 	var joinedStr [][]string
-	var formerHeigth int
-	// bring all to same heigth if they are smaller
+	targetHeigth := m.Height
+	var errList MultipleErrors
+	// bring all to same height if they are smaller
 	for _, boxer := range m.children {
 		lines, err := boxer.Box.Lines()
 		if err != nil {
-			return nil, err
+			errList = append(errList, err)
 		}
 
+		if targetHeigth > boxer.Heigth {
+			err := NewWrongSizeError(0, targetHeigth, 0, boxer.Heigth)
+			lines = strings.Split(err.Error(), NEWLINE)
+		}
 		if len(lines) < boxer.Heigth {
 			lines = append(lines, make([]string, boxer.Heigth-len(lines))...)
 		}
 		joinedStr = append(joinedStr, lines)
-		if formerHeigth > 0 && formerHeigth != boxer.Heigth {
-			return nil, fmt.Errorf("for horizontal join all have to be the same heigth") // TODO change to own error type
-		}
-		formerHeigth = boxer.Heigth
+		targetHeigth = boxer.Heigth
 	}
 
 	lenght := len(joinedStr)
 	// Join the horizontal lines together
 	var allStr []string
 	// y
-	for c := 0; c < formerHeigth; c++ {
+	for c := 0; c < targetHeigth; c++ {
 		fullLine := make([]string, 0, lenght)
 		// x
 		for i := 0; i < lenght; i++ {
@@ -307,7 +302,8 @@ func (m *Model) leftRightJoin() ([]string, error) {
 			line := joinedStr[i][c]
 			lineWidth := ansi.PrintableRuneWidth(line)
 			if lineWidth > boxWidth {
-				return nil, NewProporationError(m.children[i].Box)
+				err := NewProporationError(m.children[i].Box)
+				allStr = strings.Split(err.Error(), NEWLINE)
 			}
 			var pad string
 			if lineWidth < boxWidth {
@@ -318,32 +314,43 @@ func (m *Model) leftRightJoin() ([]string, error) {
 		allStr = append(allStr, strings.Join(fullLine, ""))
 	}
 
-	return allStr, nil
+	return allStr, errList
 }
 
 func (m *Model) upDownJoin() ([]string, error) {
+
 	if len(m.children) == 0 {
-		return nil, fmt.Errorf("")
+		err := NewNoChildrenError()
+		return strings.Split(err.Error(), NEWLINE), err
 	}
 	boxWidth := m.children[0].Width
-	var boxes []string
-	var formerWidth int
+	boxes := make([]string, 0, m.Height)
+	targetWidth := m.Width
+	var errList MultipleErrors
 	for _, child := range m.children {
 		if child.Box == nil {
-			return nil, fmt.Errorf("cant work on nil Boxer") // TODO
+			err := NewNoChildrenError()
+			return strings.Split(err.Error(), NEWLINE), err
 		}
 		lines, err := child.Box.Lines()
 		if err != nil {
-			return nil, err // TODO limit propagation of errors
+			errList = append(errList, err)
 		}
 		if len(lines) > child.Heigth {
-			return nil, NewProporationError(child.Box)
+			err := NewProporationError(child.Box)
+			lines = strings.Split(err.Error(), NEWLINE)
 		}
-		// check for to wide lines and because we are on it, pad them to corrct width.
+		// check for to wide lines and because we are on it, pad them to correct width.
 		for _, line := range lines {
 			lineWidth := ansi.PrintableRuneWidth(line)
-			if formerWidth > 0 && lineWidth != formerWidth {
-				return nil, fmt.Errorf("for vertical join all boxes have to be the same width") // TODO change to own error type
+			if lineWidth != targetWidth {
+				err := NewWrongSizeError(lineWidth, 0, targetWidth, 0)
+				line = err.Error()
+				lineWidth = ansi.PrintableRuneWidth(line)
+				if lineWidth > targetWidth {
+					line = line[:targetWidth] // TODO handle ansi better
+					lineWidth = ansi.PrintableRuneWidth(line)
+				}
 			}
 			line += strings.Repeat(SPACE, boxWidth-lineWidth)
 		}
@@ -353,13 +360,13 @@ func (m *Model) upDownJoin() ([]string, error) {
 			boxes = append(boxes, strings.Repeat(SPACE, boxWidth))
 		}
 	}
-	return boxes, nil
+	return boxes, errList
 }
 
-// AddChildren addes the given BoxerSize's as children
-// but excludes nil-values and returns after adding the rest a Nil Error
-func (m *Model) AddChildren(cList []BoxSize) error {
-	var errCount int
+// AddChildren adds the given BoxerSize's as children
+// If one provided BoxerSize.Box is 'nil' an NotABoxerError is returned
+// and no child is added!
+func (m *Model) AddChildren(cList ...BoxSize) error {
 	newChildren := make([]BoxSize, 0, len(cList))
 	for _, newChild := range cList {
 		switch c := newChild.Box.(type) {
@@ -367,17 +374,14 @@ func (m *Model) AddChildren(cList []BoxSize) error {
 			c.requestID = m.requestID
 			newChild.Box = c
 			newChildren = append(newChildren, newChild)
-		case Leave:
+		case nil:
+			return NewNotABoxerError(c)
+		default:
 			newChild.Box = c
 			newChildren = append(newChildren, newChild)
-		default:
-			errCount++
 		}
 	}
 	m.children = append(m.children, newChildren...)
-	if errCount > 0 {
-		return fmt.Errorf("%d entrys could not be added, because there type does not match a 'boxer.Model' or 'boxer.Leave'.\n Most likely you have to embed your model in a 'boxer.Leave.Content'", errCount)
-	}
 	return nil
 }
 
@@ -389,7 +393,7 @@ func (m *Model) getID() int {
 
 		m.requestID = req
 
-		// the id '0' is skiped to be able to distinguish zero-value and proper id TODO is this a valid/good way to go?
+		// the id '0' is skipped to be able to distinguish zero-value and proper id TODO is this a valid/good way to go?
 		go func(requ <-chan chan int) {
 			for c := 2; true; c++ {
 				send := <-requ

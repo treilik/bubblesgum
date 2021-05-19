@@ -148,8 +148,15 @@ func (l *Leave) lines() ([]string, error) {
 	} else {
 		lines = strings.Split(l.Content.View(), NEWLINE)
 	}
+	if err != nil {
+		lines = strings.Split(err.Error(), NEWLINE)
+		if len(lines) > l.innerHeigth {
+			// limit the lines, so that NewProporationError does not overwrite the original error
+			lines = lines[:l.innerHeigth]
+		}
+	}
 	if length := len(lines); length > l.innerHeigth {
-		return nil, NewProporationError(l)
+		err = NewProporationError(l)
 	}
 
 	// expand to match heigth

@@ -22,7 +22,8 @@ func main() {
 
 	grandNode := boxer.Model{}
 	grandNode.Vertical = true
-	grandNode.AddChildren([]boxer.BoxSize{{Box: boxer.Boxer(lowestFirstLeave)}, {Box: boxer.Boxer(lowestSecondLeave)}})
+	//grandNode.AddChildren(boxer.BoxSize{Box: lowestFirstLeave}, boxer.BoxSize{Box: lowestSecondLeave})
+	grandNode.AddChildren(boxer.BoxSize{Box: lowestFirst}, boxer.BoxSize{Box: lowestSecondLeave})
 
 	grandChild := list.NewModel()
 	grandChild.AddItems(list.MakeStringerList([]string{"second", "grandchild"}))
@@ -32,11 +33,7 @@ func main() {
 
 	rightChild := boxer.Model{}
 	rightChild.Vertical = true
-	rightChild.AddChildren([]boxer.BoxSize{{
-		Box: boxer.Boxer(grandNode),
-	}, {
-		Box: boxer.Boxer(grandLeave),
-	}})
+	rightChild.AddChildren(boxer.BoxSize{Box: grandNode}, boxer.BoxSize{Box: grandLeave})
 
 	leftList := list.NewModel()
 	leftList.AddItems(list.MakeStringerList([]string{"leftList", "rootchild"}))
@@ -49,11 +46,11 @@ func main() {
 	rigthLeave.Content = rigthList
 
 	root := boxer.Model{}
-	root.AddChildren([]boxer.BoxSize{
-		{Box: rightChild},
-		{Box: leftLeave},
-		{Box: rigthLeave},
-	})
+	root.AddChildren(
+		boxer.BoxSize{Box: rightChild},
+		boxer.BoxSize{Box: leftLeave},
+		boxer.BoxSize{Box: rigthLeave},
+	)
 	p := tea.NewProgram(root)
 	if err := p.Start(); err != nil {
 		fmt.Println("could not start program")
