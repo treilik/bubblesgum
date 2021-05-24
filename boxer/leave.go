@@ -19,6 +19,7 @@ type Leave struct {
 	innerWidth  int
 	Focus       bool
 	id          int
+	Address     string
 
 	N, NW, W, SW, S, SO, O, NO string
 }
@@ -60,10 +61,28 @@ func (l Leave) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// make a uniq channel for this leave
 		idGen := make(chan int)
 		// send this uniq channel over the general channel
-		msg <- idGen
+		msg.idChanStream <- idGen
 		// to recive a uniq id from the uniq channel
 		l.id = <-idGen
-		return l, nil
+		if l.Content == nil {
+			return l, nil
+		}
+		msg.path = append(msg.path, nodePos{id: l.id})
+		var cmd tea.Cmd
+		//if an Address for this leave was set reply a pathInfo so the root node knows about the path to this address
+		if l.Address != "" {
+			cmd = func() tea.Msg { return pathInfo{path: msg.path, address: l.Address} }
+		}
+		return l, cmd
+	case AddressMsg:
+		if msg.Address != l.Address {
+			panic("wrong address")
+			// TODO return error
+		}
+		c, cmd := l.Content.Update(msg.Msg)
+		l.Content = c
+		return l, cmd
+
 	case FocusLeave:
 		if !l.Focus {
 			return l, nil

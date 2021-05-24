@@ -22,6 +22,8 @@ type Boxer interface {
 
 // Model is a bubble to manage/bundle other bubbles into boxes on the screen
 type Model struct {
+	root          bool
+	paths         map[string][]nodePos
 	children      []BoxSize
 	Height, Width int
 	Vertical      bool
@@ -35,19 +37,34 @@ type Model struct {
 // BoxSize holds a boxer value and the current size the box of this boxer should have
 type BoxSize struct {
 	Box           Boxer
-	Width, Heigth int
+	Width, Height int
 }
 
 // Start is a Msg to start the id spreading
 type Start struct{}
 
 // InitIDs is a Msg to spread the id's of the leaves
-type InitIDs chan<- chan int
+type InitIDs struct {
+	idChanStream chan<- chan int
+	path         []nodePos
+}
+
+type pathInfo struct {
+	path    []nodePos
+	address string
+}
 
 // FocusLeave is used to gather the path of each leave while its transported to the leave.
 type FocusLeave struct {
 	path           []nodePos
 	vertical, next bool
+}
+
+// AddressMsg is a Command to update a specific node in the Boxer-tree
+type AddressMsg struct {
+	path    []nodePos
+	Msg     tea.Msg // TODO Change to Cmd?
+	Address string
 }
 
 // ChangeFocus is the answer of FocusLeave and tells the parents to change the focus of the leaves by two msg.
@@ -83,21 +100,65 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case Start:
 		// only the root node gets this all other ids will be set through the spreading of InitIDs
 		// TODO should root node be a own struct? To handle the id spread-starting cleaner.
+		m.root = true
 		if m.requestID != nil {
 			return m, nil
 		}
 		m.id = m.getID()
-		return m, func() tea.Msg { return InitIDs(m.requestID) }
+		return m, func() tea.Msg { return InitIDs{idChanStream: m.requestID} }
+	case pathInfo:
+		if m.paths == nil {
+			m.paths = make(map[string][]nodePos)
+		}
+		m.paths[msg.address] = msg.path
+		return m, nil
+	case AddressMsg:
+		if m.root {
+			path, ok := m.paths[msg.Address]
+			if !ok {
+				// TODO return err Cmd
+			}
+			msg.path = path
+		}
+		if len(msg.path) == 0 {
+			// TODO send error
+		}
+		next := msg.path[0]
+		if next.childAmount > len(m.children) || next.index > len(m.children) {
+			// TODO send error
+		}
+
+		// follow path
+		var rest []nodePos
+		if len(msg.path) > 0 {
+			rest = msg.path[1:]
+		}
+		msg.path = rest
+		newModel, cmd := m.children[next.index].Box.Update(msg)
+		newBox, ok := newModel.(Boxer)
+		if !ok {
+			// TODO send error
+		}
+		m.children[next.index].Box = newBox
+		return m, cmd
 
 	case InitIDs:
 		if m.requestID == nil {
-			m.requestID = msg
+			m.requestID = msg.idChanStream
 			genID := make(chan int)
 			m.requestID <- genID
 			m.id = <-genID
 		}
+
+		amount := len(m.children)
 		for i, box := range m.children {
-			newModel, cmd := box.Box.Update(msg)
+			// pass the channel (contained in InitID) recursivley down to the children.
+			newMsg := InitIDs{}
+			// make a local copy of msg with longer path:
+			newMsg.path = append(msg.path, nodePos{index: i, id: m.id, childAmount: amount})
+			newMsg.idChanStream = msg.idChanStream
+
+			newModel, cmd := box.Box.Update(newMsg)
 			newBoxer, ok := newModel.(Boxer)
 			if !ok {
 				continue // TODO dont ignore this error
@@ -127,12 +188,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, tea.Batch(cmdList...)
 
-	// ChangedFocus is a exception to the FAN-OUT of the Msg's because its follows the specific path defined by the Msg-emitter.
+	// ChangeFocus is a exception to the FAN-OUT of the Msg's because its follows the specific path defined by the Msg-emitter.
 	case ChangeFocus:
 		// default to the last focused
 		targetIndex := m.lastFocused
 
-		// path is not empyt
+		// if path is not empyt
 		if len(msg.newFocus.path) > 0 {
 			// follow the path
 			targetIndex = msg.newFocus.path[0].index
@@ -144,6 +205,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if !msg.newFocus.next && msg.newFocus.vertical == m.Vertical {
 				targetIndex = len(m.children) - 1
 			}
+
 		}
 		// if its not possible to follow the path:
 		if targetIndex < 0 || targetIndex >= len(m.children) {
@@ -159,11 +221,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.lastFocused = targetIndex
 		newModel, cmd := m.children[targetIndex].Box.Update(childMsg)
-		var ok bool
-		m.children[targetIndex].Box, ok = newModel.(Boxer)
+		newBox, ok := newModel.(Boxer)
 		if !ok {
-			panic("wrong type") // TODO
+			cmd = func() tea.Msg { return NewWrongTypeError(newBox, "boxer.Boxer") }
 		}
+		m.children[targetIndex].Box = newBox
 		return m, cmd
 
 	case tea.KeyMsg:
@@ -223,7 +285,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				continue // TODO
 			}
 			box.Box = newBoxer
-			box.Heigth = newHeigth
+			box.Height = newHeigth
 			box.Width = newWidth
 			m.children[i] = box
 			cmdList = append(cmdList, cmd)
@@ -279,15 +341,15 @@ func (m *Model) leftRightJoin() ([]string, error) {
 			errList = append(errList, err)
 		}
 
-		if targetHeigth > boxer.Heigth {
-			err := NewWrongSizeError(0, targetHeigth, 0, boxer.Heigth)
+		if targetHeigth > boxer.Height {
+			err := NewWrongSizeError(0, targetHeigth, 0, boxer.Height)
 			lines = strings.Split(err.Error(), NEWLINE)
 		}
-		if len(lines) < boxer.Heigth {
-			lines = append(lines, make([]string, boxer.Heigth-len(lines))...)
+		if len(lines) < boxer.Height {
+			lines = append(lines, make([]string, boxer.Height-len(lines))...)
 		}
 		joinedStr = append(joinedStr, lines)
-		targetHeigth = boxer.Heigth
+		targetHeigth = boxer.Height
 	}
 
 	lenght := len(joinedStr)
@@ -336,7 +398,7 @@ func (m *Model) upDownJoin() ([]string, error) {
 		if err != nil {
 			errList = append(errList, err)
 		}
-		if len(lines) > child.Heigth {
+		if len(lines) > child.Height {
 			err := NewProporationError(child.Box)
 			lines = strings.Split(err.Error(), NEWLINE)
 		}
@@ -345,7 +407,9 @@ func (m *Model) upDownJoin() ([]string, error) {
 			lineWidth := ansi.PrintableRuneWidth(line)
 			if lineWidth != targetWidth {
 				err := NewWrongSizeError(lineWidth, 0, targetWidth, 0)
-				line = err.Error()
+				if err != nil {
+					line = err.Error() // TODO change error handling?
+				}
 				lineWidth = ansi.PrintableRuneWidth(line)
 				if lineWidth > targetWidth {
 					line = line[:targetWidth] // TODO handle ansi better
@@ -356,7 +420,7 @@ func (m *Model) upDownJoin() ([]string, error) {
 		}
 		boxes = append(boxes, lines...)
 		// add more lines to boxes to match the Height of the child-box
-		for c := 0; c < child.Heigth-len(lines); c++ {
+		for c := 0; c < child.Height-len(lines); c++ {
 			boxes = append(boxes, strings.Repeat(SPACE, boxWidth))
 		}
 	}

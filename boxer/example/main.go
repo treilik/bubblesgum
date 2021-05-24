@@ -14,16 +14,16 @@ func main() {
 	lowestFirst.AddItems(list.MakeStringerList([]string{"first", "lowest first child"}))
 	lowestFirstLeave := boxer.NewLeave()
 	lowestFirstLeave.Content = lowestFirst
+	lowestFirstLeave.Address = "target"
 
-	lowestSecond := list.NewModel()
-	lowestSecond.AddItems(list.MakeStringerList([]string{"first", "lowest second child"}))
+	lowestSecond := custom{model: list.NewModel()}
+	lowestSecond.model.AddItems(list.MakeStringerList([]string{"first", "lowest second child test"}))
 	lowestSecondLeave := boxer.NewLeave()
 	lowestSecondLeave.Content = lowestSecond
 
 	grandNode := boxer.Model{}
 	grandNode.Vertical = true
-	//grandNode.AddChildren(boxer.BoxSize{Box: lowestFirstLeave}, boxer.BoxSize{Box: lowestSecondLeave})
-	grandNode.AddChildren(boxer.BoxSize{Box: lowestFirst}, boxer.BoxSize{Box: lowestSecondLeave})
+	grandNode.AddChildren(boxer.BoxSize{Box: lowestFirstLeave}, boxer.BoxSize{Box: lowestSecondLeave})
 
 	grandChild := list.NewModel()
 	grandChild.AddItems(list.MakeStringerList([]string{"second", "grandchild"}))
@@ -56,4 +56,32 @@ func main() {
 		fmt.Println("could not start program")
 		os.Exit(1)
 	}
+}
+
+type custom struct {
+	model list.Model
+	count int
+}
+
+func (c custom) Init() tea.Cmd {
+	return c.model.Init()
+}
+func (c custom) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	if msg, ok := msg.(tea.KeyMsg); ok && msg.String() == "end" {
+		return c, func() tea.Msg {
+			return boxer.AddressMsg{Address: "target", Msg: msg}
+		}
+	}
+	m, cmd := c.model.Update(msg)
+	l, _ := m.(list.Model)
+	c.model = l
+	return c, cmd
+}
+
+func (c custom) View() string {
+	return c.model.View()
+}
+
+func (c custom) Lines() ([]string, error) {
+	return c.model.Lines()
 }
