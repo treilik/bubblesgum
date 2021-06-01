@@ -1,6 +1,7 @@
 package boxer
 
 import (
+	"fmt"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -68,16 +69,19 @@ func (l Leave) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return l, nil
 		}
 		msg.path = append(msg.path, nodePos{id: l.id})
-		var cmd tea.Cmd
 		//if an Address for this leave was set reply a pathInfo so the root node knows about the path to this address
 		if l.Address != "" {
-			cmd = func() tea.Msg { return pathInfo{path: msg.path, address: l.Address} }
+			addrChan := make(chan pathInfo, 1) // dont block
+			defer close(addrChan)
+
+			addrChan <- pathInfo{path: msg.path, address: l.Address}
+			msg.pathInfoStream <- addrChan
 		}
-		return l, cmd
+		return l, nil
 	case AddressMsg:
 		if msg.Address != l.Address {
-			panic("wrong address")
-			// TODO return error
+			return l, func() tea.Msg { return fmt.Errorf("wrong address") }
+			// TODO make own error type
 		}
 		c, cmd := l.Content.Update(msg.Msg)
 		l.Content = c

@@ -1,6 +1,7 @@
 package boxer
 
 import (
+	"fmt"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -41,12 +42,16 @@ type BoxSize struct {
 }
 
 // Start is a Msg to start the id spreading
-type Start struct{}
+type start struct{}
+
+// Ready is issued
+type Ready struct{}
 
 // InitIDs is a Msg to spread the id's of the leaves
 type InitIDs struct {
-	idChanStream chan<- chan int
-	path         []nodePos
+	idChanStream   chan<- chan int
+	path           []nodePos
+	pathInfoStream chan<- chan pathInfo
 }
 
 type pathInfo struct {
@@ -88,7 +93,7 @@ func (m Model) Init() tea.Cmd {
 		cmdList = append(cmdList, child.Box.Init())
 	}
 	// the adding of the Start Msg leads to multiple Msg while only one is used and the rest gets ignored
-	cmdList = append(cmdList, func() tea.Msg { return Start{} })
+	cmdList = append(cmdList, func() tea.Msg { return start{} })
 	return tea.Batch(cmdList...)
 }
 
@@ -97,7 +102,7 @@ func (m Model) Init() tea.Cmd {
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmdList []tea.Cmd
 	switch msg := msg.(type) {
-	case Start:
+	case start:
 		// only the root node gets this all other ids will be set through the spreading of InitIDs
 		// TODO should root node be a own struct? To handle the id spread-starting cleaner.
 		m.root = true
@@ -106,26 +111,22 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.id = m.getID()
 		return m, func() tea.Msg { return InitIDs{idChanStream: m.requestID} }
-	case pathInfo:
-		if m.paths == nil {
-			m.paths = make(map[string][]nodePos)
-		}
-		m.paths[msg.address] = msg.path
-		return m, nil
 	case AddressMsg:
 		if m.root {
 			path, ok := m.paths[msg.Address]
 			if !ok {
-				// TODO return err Cmd
+				return m, func() tea.Msg { return fmt.Errorf("address '%s' not found ", msg.Address) }
+				// TODO change to own error type
 			}
 			msg.path = path
 		}
 		if len(msg.path) == 0 {
-			// TODO send error
+			return m, func() tea.Msg { return NewEmptyPath(msg) }
 		}
 		next := msg.path[0]
 		if next.childAmount > len(m.children) || next.index > len(m.children) {
-			// TODO send error
+			return m, func() tea.Msg { return fmt.Errorf("cant follow path") }
+			// TODO change to own error type
 		}
 
 		// follow path
@@ -137,12 +138,35 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		newModel, cmd := m.children[next.index].Box.Update(msg)
 		newBox, ok := newModel.(Boxer)
 		if !ok {
-			// TODO send error
+			return m, func() tea.Msg { return fmt.Errorf("one child returned something else than a boxer: %T", newBox) }
+			// TODO change to own error type
 		}
 		m.children[next.index].Box = newBox
 		return m, cmd
 
 	case InitIDs:
+		var rootStream chan []pathInfo
+		if m.root {
+			leaveStream := make(chan chan pathInfo)
+			rootStream = make(chan []pathInfo) // block
+			msg.pathInfoStream = leaveStream
+			go func() {
+				defer close(rootStream)
+				defer close(leaveStream)
+
+				var addressList []pathInfo
+				for true {
+					select {
+					case newAddr := <-leaveStream:
+						addressList = append(addressList, <-newAddr)
+					case rootStream <- addressList:
+						// since rootStream only unblocks when it was read from there will be no more writes in leaveStream.
+						// rootStream will only be read when all leaves Updates have returen so now writes to addr will happen.
+						return
+					}
+				}
+			}()
+		}
 		if m.requestID == nil {
 			m.requestID = msg.idChanStream
 			genID := make(chan int)
@@ -157,6 +181,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// make a local copy of msg with longer path:
 			newMsg.path = append(msg.path, nodePos{index: i, id: m.id, childAmount: amount})
 			newMsg.idChanStream = msg.idChanStream
+			newMsg.pathInfoStream = msg.pathInfoStream
 
 			newModel, cmd := box.Box.Update(newMsg)
 			newBoxer, ok := newModel.(Boxer)
@@ -167,6 +192,17 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.children[i] = box
 			cmdList = append(cmdList, cmd)
 		}
+		if !m.root {
+			return m, tea.Batch(cmdList...)
+		}
+		if m.paths == nil {
+			m.paths = make(map[string][]nodePos)
+		}
+		addresses := <-rootStream
+		for _, addr := range addresses {
+			m.paths[addr.address] = addr.path
+		}
+		cmdList = append(cmdList, func() tea.Msg { return Ready{} })
 		return m, tea.Batch(cmdList...)
 
 	// FocusLeave is a exception to the FAN-OUT of the Msg's because for each child there is a specific msg, similar to the WindowSizeMsg.
