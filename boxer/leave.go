@@ -71,11 +71,7 @@ func (l Leave) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		msg.path = append(msg.path, nodePos{id: l.id})
 		//if an Address for this leave was set reply a pathInfo so the root node knows about the path to this address
 		if l.Address != "" {
-			addrChan := make(chan pathInfo, 1) // dont block
-			defer close(addrChan)
-
-			addrChan <- pathInfo{path: msg.path, address: l.Address}
-			msg.pathInfoStream <- addrChan
+			msg.pathInfoStream <- pathInfo{path: msg.path, address: l.Address}
 		}
 		return l, nil
 	case AddressMsg:

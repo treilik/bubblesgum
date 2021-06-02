@@ -52,7 +52,7 @@ type Ready struct{}
 type InitIDs struct {
 	idChanStream   chan<- chan int
 	path           []nodePos
-	pathInfoStream chan<- chan pathInfo
+	pathInfoStream chan pathInfo
 }
 
 type pathInfo struct {
@@ -148,7 +148,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case InitIDs:
 		var rootStream chan []pathInfo
 		if m.root {
-			leaveStream := make(chan chan pathInfo)
+			leaveStream := make(chan pathInfo)
 			rootStream = make(chan []pathInfo) // block
 			msg.pathInfoStream = leaveStream
 			go func() {
@@ -159,7 +159,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				for true {
 					select {
 					case newAddr := <-leaveStream:
-						addressList = append(addressList, <-newAddr)
+						addressList = append(addressList, newAddr)
 					case rootStream <- addressList:
 						// since rootStream only unblocks when it was read from there will be no more writes in leaveStream.
 						// rootStream will only be read when all leaves Updates have returen so now writes to addr will happen.
@@ -199,6 +199,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.paths == nil {
 			m.paths = make(map[string][]nodePos)
 		}
+		// Since all Update calls to the children have finished the following line should not block
 		addresses := <-rootStream
 		for _, addr := range addresses {
 			m.paths[addr.address] = addr.path
