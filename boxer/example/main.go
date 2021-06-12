@@ -19,6 +19,7 @@ func main() {
 	middleLeave := boxer.NewLeave()
 	middleLeave.Content = middleList
 	middleLeave.Address = "middle"
+	middleLeave.Focus = true
 
 	rigthList := list.NewModel()
 	rigthLeave := boxer.NewLeave()
@@ -31,6 +32,17 @@ func main() {
 		boxer.BoxSize{Box: middleLeave},
 		boxer.BoxSize{Box: rigthLeave},
 	)
+	contentNode.Sizer = func(childernLen int, vertical bool, msg tea.WindowSizeMsg) ([]tea.WindowSizeMsg, error) {
+		first := msg.Width / 6
+		second := msg.Width / 3
+		third := msg.Width - first - second
+		return []tea.WindowSizeMsg{
+			{Width: first, Height: msg.Height},
+			{Width: second, Height: msg.Height},
+			{Width: third, Height: msg.Height},
+		}, nil
+	}
+
 	errorList := list.NewModel()
 	errorLeave := boxer.NewLeave()
 	errorLeave.Content = errorList
@@ -42,6 +54,20 @@ func main() {
 		boxer.BoxSize{Box: contentNode},
 		boxer.BoxSize{Box: errorLeave},
 	)
+	boxerRoot.Sizer = func(childernLen int, vertical bool, msg tea.WindowSizeMsg) ([]tea.WindowSizeMsg, error) {
+		if msg.Height < 10 {
+			return nil, fmt.Errorf("too less lines for custom size for children")
+		}
+		if childernLen != 2 {
+			return nil, fmt.Errorf("wrong amount of children for this size layout")
+		}
+		errorHight := 4
+
+		return []tea.WindowSizeMsg{
+			{Width: msg.Width, Height: msg.Height - errorHight},
+			{Width: msg.Width, Height: errorHight},
+		}, nil
+	}
 
 	grandChildNode := node{}
 	grandChildNode.value = "grandchild"
@@ -61,30 +87,32 @@ func main() {
 	root.boxView = boxerRoot
 	root.tree = rootNode
 	p := tea.NewProgram(root)
+	p.EnterAltScreen()
 	if err := p.Start(); err != nil {
 		fmt.Println("could not start program")
 		os.Exit(1)
 	}
+	p.ExitAltScreen()
 }
 
 type treeViewer struct {
 	boxView boxer.Boxer
 	tree    stringerTree
 	ready   bool
+	errList []fmt.Stringer
 }
 
 func (t treeViewer) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if !t.ready {
 		_, ok := msg.(boxer.Ready)
-		if ok {
-			t.ready = true
-		} else {
-			// pipe all msgs though that boxer needs to be ready
+		if !ok {
+			// pipe all msgs through which boxer needs to be ready
 			newModel, cmd := t.boxView.Update(msg)
 			newBox := newModel.(boxer.Boxer)
 			t.boxView = newBox
 			return t, cmd
 		}
+		t.ready = true
 	}
 	switch msg := msg.(type) {
 	case boxer.Ready:
@@ -121,7 +149,12 @@ func (t treeViewer) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		return t, tea.Batch(leftListCmd, middleListCmd, rightListCmd)
 	case error:
-		errorCmd := boxer.AddressMsg{Address: "error", Msg: list.ResetItems{errorStringer{msg}}}
+		t.errList = append(t.errList, errorStringer{msg})
+		reversed := make([]fmt.Stringer, 0, len(t.errList))
+		for c := len(t.errList) - 1; c >= 0; c-- {
+			reversed = append(reversed, t.errList[c])
+		}
+		errorCmd := boxer.AddressMsg{Address: "error", Msg: list.ResetItems(reversed)}
 		newModel, cmd := t.boxView.Update(errorCmd)
 		newBox := newModel.(boxer.Boxer)
 		t.boxView = newBox

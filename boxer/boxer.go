@@ -31,7 +31,7 @@ type Model struct {
 	Vertical      bool
 	id            int
 	lastFocused   int
-	//Sizer         func(childLenght, currentIndex int, msg tea.WindowSizeMsg) (tea.WindowSizeMsg, error)
+	Sizer         func(childLenght int, vertical bool, msg tea.WindowSizeMsg) ([]tea.WindowSizeMsg, error)
 
 	requestID chan<- chan int
 }
@@ -122,10 +122,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			msg.path = path
 		}
 		if len(msg.path) == 0 {
+			// can't follow path -> return error
 			return m, func() tea.Msg { return NewEmptyPath(msg) }
 		}
 		next := msg.path[0]
 		if next.childAmount > len(m.children) || next.index > len(m.children) {
+			// path does not exists -> return error
 			return m, func() tea.Msg { return fmt.Errorf("cant follow path") }
 			// TODO change to own error type
 		}
@@ -303,6 +305,22 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.Width = msg.Width
 		m.Height = msg.Height
+
+		if m.Sizer != nil {
+			newSizes, err := m.Sizer(len(m.children), m.Vertical, msg)
+			if err == nil && len(newSizes) == len(m.children) {
+				for i, box := range m.children {
+					model, cmd := box.Box.Update(newSizes[i])
+					box := model.(Boxer)
+					m.children[i].Box = box
+					m.children[i].Height = newSizes[i].Height
+					m.children[i].Width = newSizes[i].Width
+					cmdList = append(cmdList, cmd)
+				}
+				return m, tea.Batch(cmdList...)
+			}
+			cmdList = append(cmdList, func() tea.Msg { return err })
+		}
 
 		amount := len(m.children)
 		quotient := msg.Width / amount
