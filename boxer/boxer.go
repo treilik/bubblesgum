@@ -18,8 +18,10 @@ const (
 
 // Boxer is a interface to render multiple bubbles (within a tree) to the terminal screen.
 type Boxer interface {
+	tea.Model
+	InitAll() []tea.Cmd
+	UpdateAll(tea.Msg) (Boxer, []tea.Cmd)
 	Lines() ([]string, error)
-	tea.Model // TODO remove View
 }
 
 // Model is a bubble to manage/bundle other bubbles into boxes on the screen
@@ -29,7 +31,6 @@ type Model struct {
 	children      []BoxSize
 	Height, Width int
 	Vertical      bool
-	id            int
 	lastFocused   int
 	Sizer         func(childLenght int, vertical bool, msg tea.WindowSizeMsg) ([]tea.WindowSizeMsg, error)
 
@@ -40,19 +41,6 @@ type Model struct {
 type BoxSize struct {
 	Box           Boxer
 	Width, Height int
-}
-
-// Start is a Msg to start the id spreading
-type start struct{}
-
-// Ready is issued
-type Ready struct{}
-
-// InitIDs is a Msg to spread the id's of the leaves
-type InitIDs struct {
-	idChanStream   chan<- chan int
-	path           []nodePos
-	pathInfoStream chan pathInfo
 }
 
 type pathInfo struct {
@@ -83,52 +71,52 @@ type ChangeFocus struct {
 type nodePos struct {
 	index       int
 	vertical    bool
-	id          int //TODO remove
 	childAmount int
 }
 
 // Init call the Init methods of the Children and returns the batched/collected returned Cmd's of them
 func (m Model) Init() tea.Cmd {
+	return tea.Batch(m.InitAll()...)
+}
+
+// InitAll call the Init methods of the Children and returns the batched/collected returned Cmd's of them
+func (m Model) InitAll() []tea.Cmd {
 	cmdList := make([]tea.Cmd, len(m.children))
 	for _, child := range m.children {
-		cmdList = append(cmdList, child.Box.Init())
+		cmdList = append(cmdList, child.Box.InitAll()...)
 	}
-	// the adding of the Start Msg leads to multiple Msg while only one is used and the rest gets ignored
-	cmdList = append(cmdList, func() tea.Msg { return start{} })
-	return tea.Batch(cmdList...)
+	return cmdList
 }
 
 // Update handles the ratios between the different Boxers
 // through the according fanning of the WindowSizeMsg's
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	boxer, cmdList := m.UpdateAll(msg)
+	return boxer, tea.Batch(cmdList...)
+}
+
+// UpdateAll handles the ratios between the different Boxers
+// through the according fanning of the WindowSizeMsg's
+func (m Model) UpdateAll(msg tea.Msg) (Boxer, []tea.Cmd) {
 	var cmdList []tea.Cmd
 	switch msg := msg.(type) {
-	case start:
-		// only the root node gets this all other ids will be set through the spreading of InitIDs
-		// TODO should root node be a own struct? To handle the id spread-starting cleaner.
-		m.root = true
-		if m.requestID != nil {
-			return m, nil
-		}
-		m.id = m.getID()
-		return m, func() tea.Msg { return InitIDs{idChanStream: m.requestID} }
 	case AddressMsg:
 		if m.root {
 			path, ok := m.paths[msg.Address]
 			if !ok {
-				return m, func() tea.Msg { return fmt.Errorf("address '%s' not found ", msg.Address) }
+				return m, toCmdArray(fmt.Errorf("address '%s' not found ", msg.Address))
 				// TODO change to own error type
 			}
 			msg.path = path
 		}
 		if len(msg.path) == 0 {
 			// can't follow path -> return error
-			return m, func() tea.Msg { return NewEmptyPath(msg) }
+			return m, toCmdArray(NewEmptyPath(msg))
 		}
 		next := msg.path[0]
 		if next.childAmount > len(m.children) || next.index > len(m.children) {
 			// path does not exists -> return error
-			return m, func() tea.Msg { return fmt.Errorf("cant follow path") }
+			return m, toCmdArray(fmt.Errorf("cant follow path"))
 			// TODO change to own error type
 		}
 
@@ -138,78 +126,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			rest = msg.path[1:]
 		}
 		msg.path = rest
-		newModel, cmd := m.children[next.index].Box.Update(msg)
+		newModel, cmd := m.children[next.index].Box.UpdateAll(msg)
 		newBox, ok := newModel.(Boxer)
 		if !ok {
-			return m, func() tea.Msg { return fmt.Errorf("one child returned something else than a boxer: %T", newBox) }
+			return m, toCmdArray(fmt.Errorf("one child returned something else than a boxer: %T", newBox))
 			// TODO change to own error type
 		}
 		m.children[next.index].Box = newBox
 		return m, cmd
 
-	case InitIDs:
-		var rootStream chan []pathInfo
-		if m.root {
-			leaveStream := make(chan pathInfo)
-			rootStream = make(chan []pathInfo) // block
-			msg.pathInfoStream = leaveStream
-			go func() {
-				defer close(rootStream)
-				defer close(leaveStream)
-
-				var addressList []pathInfo
-				for true {
-					select {
-					case newAddr := <-leaveStream:
-						addressList = append(addressList, newAddr)
-					case rootStream <- addressList:
-						// since rootStream only unblocks when it was read from there will be no more writes in leaveStream.
-						// rootStream will only be read when all leaves Updates have returen so now writes to addr will happen.
-						return
-					}
-				}
-			}()
-		}
-		if m.requestID == nil {
-			m.requestID = msg.idChanStream
-			genID := make(chan int)
-			m.requestID <- genID
-			m.id = <-genID
-		}
-
-		amount := len(m.children)
-		for i, box := range m.children {
-			// pass the channel (contained in InitID) recursivley down to the children.
-			newMsg := InitIDs{}
-			// make a local copy of msg with longer path:
-			newMsg.path = append(msg.path, nodePos{index: i, id: m.id, childAmount: amount})
-			newMsg.idChanStream = msg.idChanStream
-			newMsg.pathInfoStream = msg.pathInfoStream
-
-			newModel, cmd := box.Box.Update(newMsg)
-			newBoxer, ok := newModel.(Boxer)
-			if !ok {
-				continue // TODO dont ignore this error
-			}
-			box.Box = newBoxer
-			m.children[i] = box
-			cmdList = append(cmdList, cmd)
-		}
-		if !m.root {
-			return m, tea.Batch(cmdList...)
-		}
-		if m.paths == nil {
-			m.paths = make(map[string][]nodePos)
-		}
-		// Since all Update calls to the children have finished the following line should not block
-		addresses := <-rootStream
-		for _, addr := range addresses {
-			m.paths[addr.address] = addr.path
-		}
-		cmdList = append(cmdList, func() tea.Msg { return Ready{} })
-		return m, tea.Batch(cmdList...)
-
-	// FocusLeave is a exception to the FAN-OUT of the Msg's because for each child there is a specific msg, similar to the WindowSizeMsg.
 	case FocusLeave:
 		length := len(m.children)
 		mu := &sync.Mutex{}
@@ -219,8 +144,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			go func(m *Model, box BoxSize, i int) {
 				// for each child append its position to the path
 				newMsg := msg
-				newMsg.path = append(msg.path, nodePos{index: i, vertical: m.Vertical, id: m.id, childAmount: length})
-				newModel, cmd := box.Box.Update(newMsg)
+				newMsg.path = append(msg.path, nodePos{index: i, vertical: m.Vertical, childAmount: length})
+				newModel, cmd := box.Box.UpdateAll(newMsg)
 				// Focus
 				newBoxer, ok := newModel.(Boxer)
 				if !ok { // TODO
@@ -229,13 +154,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				box.Box = newBoxer
 				mu.Lock()
 				m.children[i] = box
-				cmdList = append(cmdList, cmd)
+				cmdList = append(cmdList, cmd...)
 				mu.Unlock()
 				wg.Done()
 			}(&m, box, i)
 		}
 		wg.Wait()
-		return m, tea.Batch(cmdList...)
+		return m, cmdList
 
 	// ChangeFocus is a exception to the FAN-OUT of the Msg's because its follows the specific path defined by the Msg-emitter.
 	case ChangeFocus:
@@ -269,10 +194,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			childMsg.newFocus.path = msg.newFocus.path[1:]
 		}
 		m.lastFocused = targetIndex
-		newModel, cmd := m.children[targetIndex].Box.Update(childMsg)
+		newModel, cmd := m.children[targetIndex].Box.UpdateAll(childMsg)
 		newBox, ok := newModel.(Boxer)
 		if !ok {
-			cmd = func() tea.Msg { return NewWrongTypeError(newBox, "boxer.Boxer") }
+			cmd = toCmdArray(NewWrongTypeError(newBox, "boxer.Boxer"))
 		}
 		m.children[targetIndex].Box = newBox
 		return m, cmd
@@ -280,28 +205,28 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.KeyMsg:
 		switch msg.String() {
 		case "q", "ctrl+c":
-			return m, tea.Quit
+			return m, toCmdArray(tea.Quit())
 		case "alt+right":
-			return m, func() tea.Msg { return FocusLeave{next: true, vertical: false} }
+			return m, toCmdArray(FocusLeave{next: true, vertical: false})
 		case "alt+left":
-			return m, func() tea.Msg { return FocusLeave{next: false, vertical: false} }
+			return m, toCmdArray(FocusLeave{next: false, vertical: false})
 		case "alt+up":
-			return m, func() tea.Msg { return FocusLeave{next: false, vertical: true} }
+			return m, toCmdArray(FocusLeave{next: false, vertical: true})
 		case "alt+down":
-			return m, func() tea.Msg { return FocusLeave{next: true, vertical: true} }
+			return m, toCmdArray(FocusLeave{next: true, vertical: true})
 		default:
 			for i, box := range m.children {
-				newModel, cmd := box.Box.Update(msg)
+				newModel, cmd := box.Box.UpdateAll(msg)
 				newBoxer, ok := newModel.(Boxer)
 				if !ok {
 					continue
 				}
 				box.Box = newBoxer
 				m.children[i] = box
-				cmdList = append(cmdList, cmd)
+				cmdList = append(cmdList, cmd...)
 			}
 		}
-		return m, tea.Batch(cmdList...)
+		return m, cmdList
 	case tea.WindowSizeMsg:
 		m.Width = msg.Width
 		m.Height = msg.Height
@@ -310,16 +235,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			newSizes, err := m.Sizer(len(m.children), m.Vertical, msg)
 			if err == nil && len(newSizes) == len(m.children) {
 				for i, box := range m.children {
-					model, cmd := box.Box.Update(newSizes[i])
+					model, cmd := box.Box.UpdateAll(newSizes[i])
 					box := model.(Boxer)
 					m.children[i].Box = box
 					m.children[i].Height = newSizes[i].Height
 					m.children[i].Width = newSizes[i].Width
-					cmdList = append(cmdList, cmd)
+					cmdList = append(cmdList, cmd...)
 				}
-				return m, tea.Batch(cmdList...)
+				return m, cmdList
 			}
-			cmdList = append(cmdList, func() tea.Msg { return err })
+			cmdList = append(cmdList, toCmdArray(err)...)
 		}
 
 		amount := len(m.children)
@@ -348,7 +273,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						newHeigth++
 					}
 				}
-				newModel, cmd := box.Box.Update(tea.WindowSizeMsg{Height: newHeigth, Width: newWidth})
+				newModel, cmd := box.Box.UpdateAll(tea.WindowSizeMsg{Height: newHeigth, Width: newWidth})
 				newBoxer, ok := newModel.(Boxer)
 				if !ok {
 					panic("not a boxer") // TODO
@@ -358,34 +283,34 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				box.Width = newWidth
 				mu.Lock()
 				m.children[i] = box
-				cmdList = append(cmdList, cmd)
+				cmdList = append(cmdList, cmd...)
 				mu.Unlock()
 				wg.Done()
 			}(&m, box, i)
 		}
 		wg.Wait()
-		return m, tea.Batch(cmdList...)
+		return m, cmdList
 	default:
 		mu := &sync.Mutex{}
 		wg := &sync.WaitGroup{}
 		for i, box := range m.children {
 			wg.Add(1)
 			go func(m *Model, box BoxSize, i int) {
-				newModel, cmd := box.Box.Update(msg)
+				newModel, cmd := box.Box.UpdateAll(msg)
 				newBoxer, ok := newModel.(Boxer)
 				if ok {
 					box.Box = newBoxer
 				}
 				mu.Lock()
 				m.children[i] = box
-				cmdList = append(cmdList, cmd)
+				cmdList = append(cmdList, cmd...)
 				mu.Unlock()
 				wg.Done()
 
 			}(&m, box, i)
 		}
 		wg.Wait()
-		return m, tea.Batch(cmdList...)
+		return m, cmdList
 	}
 }
 
@@ -558,3 +483,14 @@ func (m *Model) getID() int {
 }
 
 // func resize(newSize tea.WindowSizeMsg, childrenAmount int) ([]int, error)
+
+func toCmdArray(msgList ...tea.Msg) []tea.Cmd {
+	cmdList := make([]tea.Cmd, 0, len(msgList))
+	for _, msg := range msgList {
+		if msg == nil {
+			continue
+		}
+		cmdList = append(cmdList, func() tea.Msg { return msg })
+	}
+	return cmdList
+}

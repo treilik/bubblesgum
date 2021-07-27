@@ -45,10 +45,18 @@ func (l Leave) Init() tea.Cmd {
 	return l.Content.Init()
 }
 
+func (l Leave) InitAll() []tea.Cmd {
+	return []tea.Cmd{l.Content.Init()}
+}
+
 // Update takes care about the seting of the id of this leave
 // and the changing of the WindowSizeMsg depending on the border
 // and the focus style of the border.
 func (l Leave) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	boxer, cmdList := l.Update(msg)
+	return boxer, tea.Batch(cmdList)
+}
+func (l Leave) UpdateAll(msg tea.Msg) (Boxer, []tea.Cmd) {
 	// TODO Remove hardcoded Focus styling:
 	if l.Focus {
 		l.BorderStyle = termenv.String().Foreground(termenv.ColorProfile().Color("#00aaaa")) // TODO remove hardcoding of style
@@ -58,30 +66,14 @@ func (l Leave) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 
 	switch msg := msg.(type) {
-	case InitIDs:
-		// make a uniq channel for this leave
-		idGen := make(chan int)
-		// send this uniq channel over the general channel
-		msg.idChanStream <- idGen
-		// to recive a uniq id from the uniq channel
-		l.id = <-idGen
-		if l.Content == nil {
-			return l, nil
-		}
-		msg.path = append(msg.path, nodePos{id: l.id})
-		//if an Address for this leave was set reply a pathInfo so the root node knows about the path to this address
-		if l.Address != "" {
-			msg.pathInfoStream <- pathInfo{path: msg.path, address: l.Address}
-		}
-		return l, nil
 	case AddressMsg:
 		if msg.Address != l.Address {
-			return l, func() tea.Msg { return fmt.Errorf("wrong address") }
+			return l, toCmdArray(fmt.Errorf("wrong address"))
 			// TODO make own error type
 		}
 		c, cmd := l.Content.Update(msg.Msg)
 		l.Content = c
-		return l, cmd
+		return l, []tea.Cmd{cmd}
 
 	case FocusLeave:
 		if !l.Focus {
@@ -110,7 +102,7 @@ func (l Leave) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			msg.path[c].index = newIndex
 			// return the new path (from the root till the changing index) in side a ChangeFocus to signal the new node that one of its children should take the focus.
 
-			return l, func() tea.Msg { return ChangeFocus{focus: true, newFocus: msg} }
+			return l, toCmdArray(ChangeFocus{focus: true, newFocus: msg})
 		}
 		// stay focused if no parent with same orientatien and suitable children is found.
 		l.Focus = true
@@ -118,28 +110,30 @@ func (l Leave) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case ChangeFocus:
 		l.Focus = msg.focus
-		return l, func() tea.Msg { return nil } // TODO why is a cmd nessecary to redraw in time?
+		return l, toCmdArray(nil) // TODO why is a cmd nessecary to redraw in time?
 	case tea.WindowSizeMsg:
 		l.Width = msg.Width
 		l.Heigth = msg.Height
 		if !l.Border {
 			l.innerWidth = msg.Width
 			l.innerHeigth = msg.Height
-			return l.Content.Update(msg)
+			newContent, cmd := l.Content.Update(msg)
+			l.Content = newContent
+			return l, []tea.Cmd{cmd}
 		}
 		// account for Border width/heigth
 		l.innerHeigth = msg.Height - strings.Count(l.N+l.S, NEWLINE) - 2
 		l.innerWidth = msg.Width - ansi.PrintableRuneWidth(l.W+l.O)
 		newContent, cmd := l.Content.Update(tea.WindowSizeMsg{Height: l.innerHeigth, Width: l.innerWidth})
 		l.Content = newContent
-		return l, cmd
+		return l, []tea.Cmd{cmd}
 	}
 	if !l.Focus {
 		return l, nil
 	}
 	newContent, cmd := l.Content.Update(msg)
 	l.Content = newContent
-	return l, cmd
+	return l, []tea.Cmd{cmd}
 }
 
 // View is used to satisfy the tea.Model interface and returnes either the joined lines
