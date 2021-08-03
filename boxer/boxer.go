@@ -1,7 +1,6 @@
 package boxer
 
 import (
-	"fmt"
 	"strings"
 	"sync"
 
@@ -27,7 +26,6 @@ type Boxer interface {
 // Model is a bubble to manage/bundle other bubbles into boxes on the screen
 type Model struct {
 	root          bool
-	paths         map[string][]nodePos
 	children      []BoxSize
 	Height, Width int
 	Vertical      bool
@@ -52,13 +50,6 @@ type pathInfo struct {
 type FocusLeave struct {
 	path           []nodePos
 	vertical, next bool
-}
-
-// AddressMsg is a Command to update a specific node in the Boxer-tree
-type AddressMsg struct {
-	path    []nodePos
-	Msg     tea.Msg // TODO Change to Cmd?
-	Address string
 }
 
 // ChangeFocus is the answer of FocusLeave and tells the parents to change the focus of the leaves by two msg.
@@ -100,41 +91,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (m Model) UpdateAll(msg tea.Msg) (Boxer, []tea.Cmd) {
 	var cmdList []tea.Cmd
 	switch msg := msg.(type) {
-	case AddressMsg:
-		if m.root {
-			path, ok := m.paths[msg.Address]
-			if !ok {
-				return m, toCmdArray(fmt.Errorf("address '%s' not found ", msg.Address))
-				// TODO change to own error type
-			}
-			msg.path = path
-		}
-		if len(msg.path) == 0 {
-			// can't follow path -> return error
-			return m, toCmdArray(NewEmptyPath(msg))
-		}
-		next := msg.path[0]
-		if next.childAmount > len(m.children) || next.index > len(m.children) {
-			// path does not exists -> return error
-			return m, toCmdArray(fmt.Errorf("cant follow path"))
-			// TODO change to own error type
-		}
-
-		// follow path
-		var rest []nodePos
-		if len(msg.path) > 0 {
-			rest = msg.path[1:]
-		}
-		msg.path = rest
-		newModel, cmd := m.children[next.index].Box.UpdateAll(msg)
-		newBox, ok := newModel.(Boxer)
-		if !ok {
-			return m, toCmdArray(fmt.Errorf("one child returned something else than a boxer: %T", newBox))
-			// TODO change to own error type
-		}
-		m.children[next.index].Box = newBox
-		return m, cmd
-
 	case FocusLeave:
 		length := len(m.children)
 		mu := &sync.Mutex{}

@@ -64,9 +64,3 @@ type WrongTypeError error
 func NewWrongTypeError(got interface{}, want ...string) error {
 	return WrongTypeError(fmt.Errorf("%v entry could not be added, because the type does not match something of %q.\n Most likely you have to embed your model in a 'boxer.Leave.Content'", got, want))
 }
-
-type EmptyPath error
-
-func NewEmptyPath(msg AddressMsg) error {
-	return EmptyPath(fmt.Errorf("the path of this address: %s is empty befor it reached its destination. it contained this Msg: %q", msg.Address, msg.Msg))
-}

@@ -1,7 +1,6 @@
 package boxer
 
 import (
-	"fmt"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -20,7 +19,6 @@ type Leave struct {
 	innerWidth  int
 	Focus       bool
 	id          int
-	Address     string
 
 	N, NW, W, SW, S, SO, O, NO string
 }
@@ -45,6 +43,7 @@ func (l Leave) Init() tea.Cmd {
 	return l.Content.Init()
 }
 
+// InitAll calls the Init of the Content and returns the cmd embedded in a array to satisfiy the Boxer-interface
 func (l Leave) InitAll() []tea.Cmd {
 	return []tea.Cmd{l.Content.Init()}
 }
@@ -56,6 +55,8 @@ func (l Leave) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	boxer, cmdList := l.Update(msg)
 	return boxer, tea.Batch(cmdList)
 }
+
+// UpdateAll calls the Update of the Content and returns the cmd embedded in a array to satisfiy the Boxer-interface
 func (l Leave) UpdateAll(msg tea.Msg) (Boxer, []tea.Cmd) {
 	// TODO Remove hardcoded Focus styling:
 	if l.Focus {
@@ -66,15 +67,6 @@ func (l Leave) UpdateAll(msg tea.Msg) (Boxer, []tea.Cmd) {
 	}
 
 	switch msg := msg.(type) {
-	case AddressMsg:
-		if msg.Address != l.Address {
-			return l, toCmdArray(fmt.Errorf("wrong address"))
-			// TODO make own error type
-		}
-		c, cmd := l.Content.Update(msg.Msg)
-		l.Content = c
-		return l, []tea.Cmd{cmd}
-
 	case FocusLeave:
 		if !l.Focus {
 			return l, nil
