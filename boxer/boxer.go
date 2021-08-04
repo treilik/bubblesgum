@@ -31,8 +31,6 @@ type Model struct {
 	Vertical      bool
 	lastFocused   int
 	Sizer         func(childLenght int, vertical bool, msg tea.WindowSizeMsg) ([]tea.WindowSizeMsg, error)
-
-	requestID chan<- chan int
 }
 
 // BoxSize holds a boxer value and the current size the box of this boxer should have
@@ -41,28 +39,17 @@ type BoxSize struct {
 	Width, Height int
 }
 
-type pathInfo struct {
-	path    []nodePos
-	address string
+// PathMsg is used to transport the information about the position and the Msg to every leave-content.
+type PathMsg struct {
+	Path []NodePos
+	Msg  tea.Msg
 }
 
-// FocusLeave is used to gather the path of each leave while its transported to the leave.
-type FocusLeave struct {
-	path           []nodePos
-	vertical, next bool
-}
-
-// ChangeFocus is the answer of FocusLeave and tells the parents to change the focus of the leaves by two msg.
-type ChangeFocus struct {
-	newFocus    FocusLeave
-	focus       bool
-	handledPath []nodePos
-}
-
-type nodePos struct {
-	index       int
-	vertical    bool
-	childAmount int
+// NodePos is used to hold the information about position of a child relative to its siblings within this layout-tree.
+type NodePos struct {
+	Index       int
+	Vertical    bool
+	ChildAmount int
 }
 
 // Init call the Init methods of the Children and returns the batched/collected returned Cmd's of them
@@ -91,7 +78,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (m Model) UpdateAll(msg tea.Msg) (Boxer, []tea.Cmd) {
 	var cmdList []tea.Cmd
 	switch msg := msg.(type) {
-	case FocusLeave:
+	case PathMsg:
 		length := len(m.children)
 		mu := &sync.Mutex{}
 		wg := &sync.WaitGroup{}
@@ -100,7 +87,7 @@ func (m Model) UpdateAll(msg tea.Msg) (Boxer, []tea.Cmd) {
 			go func(m *Model, box BoxSize, i int) {
 				// for each child append its position to the path
 				newMsg := msg
-				newMsg.path = append(msg.path, nodePos{index: i, vertical: m.Vertical, childAmount: length})
+				newMsg.Path = append(msg.Path, NodePos{Index: i, Vertical: m.Vertical, ChildAmount: length})
 				newModel, cmd := box.Box.UpdateAll(newMsg)
 				// Focus
 				newBoxer, ok := newModel.(Boxer)
@@ -118,71 +105,6 @@ func (m Model) UpdateAll(msg tea.Msg) (Boxer, []tea.Cmd) {
 		wg.Wait()
 		return m, cmdList
 
-	// ChangeFocus is a exception to the FAN-OUT of the Msg's because its follows the specific path defined by the Msg-emitter.
-	case ChangeFocus:
-		// default to the last focused
-		targetIndex := m.lastFocused
-
-		// if path is not empyt
-		if len(msg.newFocus.path) > 0 {
-			// follow the path
-			targetIndex = msg.newFocus.path[0].index
-		}
-
-		// path is empty => dont know where to go.
-		if len(msg.newFocus.path) == 0 {
-			// default to the first in the direction of the movement. (i.e. the first or the last)
-			if !msg.newFocus.next && msg.newFocus.vertical == m.Vertical {
-				targetIndex = len(m.children) - 1
-			}
-
-		}
-		// if its not possible to follow the path:
-		if targetIndex < 0 || targetIndex >= len(m.children) {
-			panic("tree has changed since ChangeFocus was send") // TODO change to error type
-		}
-
-		childMsg := ChangeFocus{focus: msg.focus, newFocus: FocusLeave{vertical: msg.newFocus.vertical}}
-		if len(msg.newFocus.path) > 0 {
-			childMsg.handledPath = append(msg.handledPath, msg.newFocus.path[0])
-		}
-		if len(msg.newFocus.path) > 1 {
-			childMsg.newFocus.path = msg.newFocus.path[1:]
-		}
-		m.lastFocused = targetIndex
-		newModel, cmd := m.children[targetIndex].Box.UpdateAll(childMsg)
-		newBox, ok := newModel.(Boxer)
-		if !ok {
-			cmd = toCmdArray(NewWrongTypeError(newBox, "boxer.Boxer"))
-		}
-		m.children[targetIndex].Box = newBox
-		return m, cmd
-
-	case tea.KeyMsg:
-		switch msg.String() {
-		case "q", "ctrl+c":
-			return m, toCmdArray(tea.Quit())
-		case "alt+right":
-			return m, toCmdArray(FocusLeave{next: true, vertical: false})
-		case "alt+left":
-			return m, toCmdArray(FocusLeave{next: false, vertical: false})
-		case "alt+up":
-			return m, toCmdArray(FocusLeave{next: false, vertical: true})
-		case "alt+down":
-			return m, toCmdArray(FocusLeave{next: true, vertical: true})
-		default:
-			for i, box := range m.children {
-				newModel, cmd := box.Box.UpdateAll(msg)
-				newBoxer, ok := newModel.(Boxer)
-				if !ok {
-					continue
-				}
-				box.Box = newBoxer
-				m.children[i] = box
-				cmdList = append(cmdList, cmd...)
-			}
-		}
-		return m, cmdList
 	case tea.WindowSizeMsg:
 		m.Width = msg.Width
 		m.Height = msg.Height
@@ -394,13 +316,12 @@ func (m *Model) upDownJoin() ([]string, error) {
 
 // AddChildren adds the given BoxerSize's as children
 // If one provided BoxerSize.Box is 'nil' an NotABoxerError is returned
-// and no child is added!
+// and NO child is added!
 func (m *Model) AddChildren(cList ...BoxSize) error {
 	newChildren := make([]BoxSize, 0, len(cList))
 	for _, newChild := range cList {
 		switch c := newChild.Box.(type) {
 		case Model:
-			c.requestID = m.requestID
 			newChild.Box = c
 			newChildren = append(newChildren, newChild)
 		case nil:
@@ -413,32 +334,6 @@ func (m *Model) AddChildren(cList ...BoxSize) error {
 	m.children = append(m.children, newChildren...)
 	return nil
 }
-
-// getID returns a new for this Model(-tree) unique id
-// to identify the nodes/leave and direct the message flow.
-func (m *Model) getID() int {
-	if m.requestID == nil {
-		req := make(chan chan int)
-
-		m.requestID = req
-
-		// the id '0' is skipped to be able to distinguish zero-value and proper id TODO is this a valid/good way to go?
-		go func(requ <-chan chan int) {
-			for c := 2; true; c++ {
-				send := <-requ
-				send <- c
-				close(send)
-			}
-		}(req)
-
-		return 1
-	}
-	idChan := make(chan int)
-	m.requestID <- idChan
-	return <-idChan
-}
-
-// func resize(newSize tea.WindowSizeMsg, childrenAmount int) ([]int, error)
 
 func toCmdArray(msgList ...tea.Msg) []tea.Cmd {
 	cmdList := make([]tea.Cmd, 0, len(msgList))

@@ -17,8 +17,6 @@ type Leave struct {
 	Heigth      int
 	innerHeigth int
 	innerWidth  int
-	Focus       bool
-	id          int
 
 	N, NW, W, SW, S, SO, O, NO string
 }
@@ -58,51 +56,7 @@ func (l Leave) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 // UpdateAll calls the Update of the Content and returns the cmd embedded in a array to satisfiy the Boxer-interface
 func (l Leave) UpdateAll(msg tea.Msg) (Boxer, []tea.Cmd) {
-	// TODO Remove hardcoded Focus styling:
-	if l.Focus {
-		l.BorderStyle = termenv.String().Foreground(termenv.ColorProfile().Color("#00aaaa")) // TODO remove hardcoding of style
-	}
-	if !l.Focus {
-		l.BorderStyle = termenv.String() // TODO remove hardcoding of style
-	}
-
 	switch msg := msg.(type) {
-	case FocusLeave:
-		if !l.Focus {
-			return l, nil
-		}
-		// TODO is there always a node befor a leave?
-		for c := len(msg.path) - 1; c >= 0; c-- {
-			ancestor := msg.path[c]
-			// ignore ancestors with undesired orientation
-			if ancestor.vertical != msg.vertical {
-				continue
-			}
-			l.Focus = false                  // TODO make sure a leave is allways focused
-			l.BorderStyle = termenv.String() // TODO remove hardcoding of style
-			newIndex := ancestor.index - 1
-			if msg.next {
-				newIndex = ancestor.index + 1
-			}
-			// skip ancestors with to less children in the desired direction
-			if newIndex < 0 || newIndex >= ancestor.childAmount {
-				continue
-			}
-
-			// update the msg to be the path for the new focus1
-			msg.path = msg.path[:c+1] // exclude the rest of the path since its not valid for the new path
-			msg.path[c].index = newIndex
-			// return the new path (from the root till the changing index) in side a ChangeFocus to signal the new node that one of its children should take the focus.
-
-			return l, toCmdArray(ChangeFocus{focus: true, newFocus: msg})
-		}
-		// stay focused if no parent with same orientatien and suitable children is found.
-		l.Focus = true
-		l.BorderStyle = termenv.String().Foreground(termenv.ColorProfile().Color("#00aaaa")) // TODO remove hardcoding of style
-
-	case ChangeFocus:
-		l.Focus = msg.focus
-		return l, toCmdArray(nil) // TODO why is a cmd nessecary to redraw in time?
 	case tea.WindowSizeMsg:
 		l.Width = msg.Width
 		l.Heigth = msg.Height
@@ -119,9 +73,6 @@ func (l Leave) UpdateAll(msg tea.Msg) (Boxer, []tea.Cmd) {
 		newContent, cmd := l.Content.Update(tea.WindowSizeMsg{Height: l.innerHeigth, Width: l.innerWidth})
 		l.Content = newContent
 		return l, []tea.Cmd{cmd}
-	}
-	if !l.Focus {
-		return l, nil
 	}
 	newContent, cmd := l.Content.Update(msg)
 	l.Content = newContent
