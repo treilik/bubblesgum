@@ -3,6 +3,7 @@ package boxer
 import (
 	"fmt"
 	"strings"
+	"sync"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/muesli/reflow/ansi"
@@ -208,20 +209,29 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	// FocusLeave is a exception to the FAN-OUT of the Msg's because for each child there is a specific msg, similar to the WindowSizeMsg.
 	case FocusLeave:
 		length := len(m.children)
+		mu := &sync.Mutex{}
+		wg := &sync.WaitGroup{}
 		for i, box := range m.children {
-			// for each child append its position to the path
-			newMsg := msg
-			newMsg.path = append(msg.path, nodePos{index: i, vertical: m.Vertical, id: m.id, childAmount: length})
-			newModel, cmd := box.Box.Update(newMsg)
-			// Focus
-			newBoxer, ok := newModel.(Boxer)
-			if !ok { // TODO
-				continue
-			}
-			box.Box = newBoxer
-			m.children[i] = box
-			cmdList = append(cmdList, cmd)
+			wg.Add(1)
+			go func(m *Model, box BoxSize, i int) {
+				// for each child append its position to the path
+				newMsg := msg
+				newMsg.path = append(msg.path, nodePos{index: i, vertical: m.Vertical, id: m.id, childAmount: length})
+				newModel, cmd := box.Box.Update(newMsg)
+				// Focus
+				newBoxer, ok := newModel.(Boxer)
+				if !ok { // TODO
+					panic("Not a Boxer")
+				}
+				box.Box = newBoxer
+				mu.Lock()
+				m.children[i] = box
+				cmdList = append(cmdList, cmd)
+				mu.Unlock()
+				wg.Done()
+			}(&m, box, i)
 		}
+		wg.Wait()
 		return m, tea.Batch(cmdList...)
 
 	// ChangeFocus is a exception to the FAN-OUT of the Msg's because its follows the specific path defined by the Msg-emitter.
@@ -300,43 +310,62 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			quotient = msg.Height / amount
 			remainder = msg.Height - quotient*amount
 		}
+		mu := &sync.Mutex{}
+		wg := &sync.WaitGroup{}
 		for i, box := range m.children {
-			newHeigth := msg.Height
-			newWidth := quotient
-			if !m.Vertical && remainder > 0 {
-				remainder--
-				newWidth++
-			}
-			if m.Vertical {
-				newHeigth = quotient
-				newWidth = msg.Width
-				if remainder > 0 {
+			wg.Add(1)
+			go func(m *Model, box BoxSize, i int) {
+				newHeigth := msg.Height
+				newWidth := quotient
+				if !m.Vertical && remainder > 0 {
 					remainder--
-					newHeigth++
+					newWidth++
 				}
-			}
-			newModel, cmd := box.Box.Update(tea.WindowSizeMsg{Height: newHeigth, Width: newWidth})
-			newBoxer, ok := newModel.(Boxer)
-			if !ok {
-				continue // TODO
-			}
-			box.Box = newBoxer
-			box.Height = newHeigth
-			box.Width = newWidth
-			m.children[i] = box
-			cmdList = append(cmdList, cmd)
+				if m.Vertical {
+					newHeigth = quotient
+					newWidth = msg.Width
+					if remainder > 0 {
+						remainder--
+						newHeigth++
+					}
+				}
+				newModel, cmd := box.Box.Update(tea.WindowSizeMsg{Height: newHeigth, Width: newWidth})
+				newBoxer, ok := newModel.(Boxer)
+				if !ok {
+					panic("not a boxer") // TODO
+				}
+				box.Box = newBoxer
+				box.Height = newHeigth
+				box.Width = newWidth
+				mu.Lock()
+				m.children[i] = box
+				cmdList = append(cmdList, cmd)
+				mu.Unlock()
+				wg.Done()
+			}(&m, box, i)
 		}
+		wg.Wait()
 		return m, tea.Batch(cmdList...)
 	default:
+		mu := &sync.Mutex{}
+		wg := &sync.WaitGroup{}
 		for i, box := range m.children {
-			newModel, cmd := box.Box.Update(msg)
-			newBoxer, ok := newModel.(Boxer)
-			if ok {
-				box.Box = newBoxer
-			}
-			m.children[i] = box
-			cmdList = append(cmdList, cmd)
+			wg.Add(1)
+			go func(m *Model, box BoxSize, i int) {
+				newModel, cmd := box.Box.Update(msg)
+				newBoxer, ok := newModel.(Boxer)
+				if ok {
+					box.Box = newBoxer
+				}
+				mu.Lock()
+				m.children[i] = box
+				cmdList = append(cmdList, cmd)
+				mu.Unlock()
+				wg.Done()
+
+			}(&m, box, i)
 		}
+		wg.Wait()
 		return m, tea.Batch(cmdList...)
 	}
 }
