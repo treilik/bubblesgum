@@ -5,8 +5,8 @@ a few ways to compose multiple [bubbles](https://github.com/charmbracelet/bubble
 ## boxer 🥊 - compose bubbles into boxes 📦
 
 To layout the bubbles with boxer, one would construct a layout-tree 🌲.
-Each node holds a arbitraly amout of children as well as the orientation of them (Horizonal/Vertical).
-The Leaves are responsible for the focus, the box arround the content and hold the content(-bubbles) it self.
+Each node holds a arbitrary amount of children as well as the orientation of them (Horizontal/Vertical).
+The Leaves are responsible for the focus, the box around the content and hold the content(-bubbles) it self.
 
 ```
 ╭l1────────────────────╮╭l2────────╮╭l3────────╮
@@ -29,8 +29,8 @@ The Leaves are responsible for the focus, the box arround the content and hold t
 
 ## list - compose bubbles into a scrollable list 📜
 
-Simply to list multiline textitems or other bubbles like textinputs,
-with custom pre- or suffix to convey the linenumber,
+Simply to list multi line text items or other bubbles like text inputs,
+with custom pre- or suffix to convey the line number,
 the current item or something of your own.
 
 ## LICENSE
